@@ -1,0 +1,12 @@
+# System files
+.DS_Store
+*.swp
+*~
+
+# IDE files
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs
+*.log
