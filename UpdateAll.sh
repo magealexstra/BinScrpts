@@ -67,5 +67,21 @@ if command -v snap >/dev/null 2>&1; then
     fi
 fi
 
+# Optional: Update Python packages if pip is installed
+if command -v pip3 >/dev/null 2>&1; then
+    print_status "Updating Python packages..."
+    if pip3 list --outdated --format=json | python3 -c "import sys, json; print('\n'.join([p['name'] for p in json.load(sys.stdin)]))" | xargs -n1 pip3 install -U 2>/dev/null; then
+        print_success "Python packages updated"
+    fi
+fi
+
+# Optional: Update npm global packages if npm is installed
+if command -v npm >/dev/null 2>&1; then
+    print_status "Updating npm global packages..."
+    if npm update -g; then
+        print_success "npm global packages updated"
+    fi
+fi
+
 print_success "All updates completed successfully!"
 exit 0

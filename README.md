@@ -4,6 +4,8 @@ A comprehensive Bash script for automating system updates on Linux systems. This
 - APT package manager
 - Flatpak applications (if installed)
 - Snap packages (if installed)
+- Python packages via pip3 (if installed)
+- Node.js global packages via npm (if installed)
 
 ## Features
 
@@ -27,6 +29,8 @@ The script will automatically:
 4. Remove unnecessary packages
 5. Update Flatpak applications (if installed)
 6. Update Snap packages (if installed)
+7. Update Python packages via pip3 (if installed)
+8. Update Node.js global packages via npm (if installed)
 
 ## Installation
 
