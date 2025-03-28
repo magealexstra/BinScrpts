@@ -13,11 +13,13 @@ A comprehensive system update automation script that handles multiple package ma
   - Flatpak updates (if installed)
   - Snap package updates (if installed)
   - Python packages updates via pip3 (if installed)
+  - Automatic detection of installed package managers
 
 - **System Maintenance**:
   - Removal of unnecessary/auto-removable packages
   - Package cache cleaning
   - System log cleanup (journalctl)
+  - Enhanced error handling and reporting
 
 - **User Experience**:
   - Colorized output for better readability
