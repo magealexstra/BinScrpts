@@ -44,6 +44,20 @@ if sudo apt upgrade -y; then
 fi
 
 
+# System cleanup
+print_status "Cleaning package cache..."
+if sudo apt clean && sudo apt autoclean; then
+    print_success "Package cache cleaned"
+fi
+
+# Clear systemd journal logs older than X days
+if command -v journalctl >/dev/null 2>&1; then
+    print_status "Clearing old system logs..."
+    if sudo journalctl --vacuum-time=7d; then
+        print_success "Old system logs cleared"
+    fi
+fi
+
 # Optional: Update Flatpak if installed
 if command -v flatpak >/dev/null 2>&1; then
     print_status "Updating Flatpak applications..."
@@ -68,13 +82,6 @@ if command -v pip3 >/dev/null 2>&1; then
     fi
 fi
 
-# Optional: Update npm global packages if npm is installed
-if command -v npm >/dev/null 2>&1; then
-    print_status "Updating npm global packages..."
-    if npm update -g; then
-        print_success "npm global packages updated"
-    fi
-fi
 
 # Check if there are any packages that can be removed
 if apt list --auto-removable 2>/dev/null | grep -q "^"; then
