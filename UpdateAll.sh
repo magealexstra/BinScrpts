@@ -43,13 +43,6 @@ if sudo apt upgrade -y; then
     print_success "Packages upgraded successfully"
 fi
 
-# Check if there are any packages that can be removed
-if apt list --auto-removable 2>/dev/null | grep -q "^"; then
-    print_status "Removing unnecessary packages..."
-    if sudo apt autoremove -y; then
-        print_success "Unnecessary packages removed"
-    fi
-fi
 
 # Optional: Update Flatpak if installed
 if command -v flatpak >/dev/null 2>&1; then
@@ -80,6 +73,14 @@ if command -v npm >/dev/null 2>&1; then
     print_status "Updating npm global packages..."
     if npm update -g; then
         print_success "npm global packages updated"
+    fi
+fi
+
+# Check if there are any packages that can be removed
+if apt list --auto-removable 2>/dev/null | grep -q "^"; then
+    print_status "Removing unnecessary packages..."
+    if sudo apt autoremove -y; then
+        print_success "Unnecessary packages removed"
     fi
 fi
 
