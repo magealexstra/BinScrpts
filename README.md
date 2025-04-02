@@ -20,9 +20,9 @@ A comprehensive system update automation script that handles multiple package ma
   - System log cleanup (journalctl)
 
 - **User Experience**:
-  - Colorized output for better readability
+  - Colorized output for better readability (status, success, errors)
   - Clear status messages
-  - Error handling with informative messages
+  - Error handling with informative messages (errors shown in red)
 
 ### Installation
 
