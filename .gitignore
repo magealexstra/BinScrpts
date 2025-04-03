@@ -10,3 +10,7 @@
 
 # Logs
 *.log
+
+# Personal configuration files
+PomBackup.sh
+configs/personal.yaml

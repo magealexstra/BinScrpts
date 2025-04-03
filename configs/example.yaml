@@ -1,0 +1,28 @@
+# Example Backup Configuration
+name: "Example Backup"
+description: "Example configuration for the Backup script"
+
+# Destination settings
+destination: "/path/to/your/backup/directory"  # Example: /media/backup/Documents
+
+# Source directories to backup
+sources:
+  - path: "/path/to/your/source/directory"  # Example: /home/user/Documents
+
+# Filter rules (more powerful than include/exclude)
+filter_rules:
+  - "- *.tmp"       # Exclude temporary files
+  - "- *.log"       # Exclude log files
+  - "- node_modules/"  # Exclude node_modules directories
+  - "- .git/"       # Exclude git repositories
+  - "- .cache/"     # Exclude cache directories
+  - "- *~"          # Exclude backup files
+
+# Rsync options
+options:
+  preserve_deleted: true  # Keep files in backup even if deleted from source
+  # compress: true        # Uncomment to enable compression during transfer
+  # bandwidth_limit: 1000 # Uncomment to limit bandwidth usage (KB/s)
+
+# Output settings
+verbose: false      # Show detailed output (set to false for cleaner single-line display)
