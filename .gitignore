@@ -34,3 +34,13 @@ configs/test.yaml
 
 # Temporary scripts
 temp_*.sh
+*temp*.sh
+
+# Setup scripts
+*setup*.sh
+*_setup.sh
+setup_*.sh
+
+# Empty scripts
+empty_*.sh
+*_empty.sh
