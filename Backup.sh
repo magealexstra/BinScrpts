@@ -22,170 +22,148 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Terminal control
-CURSOR_UP='\033[1A'
-CURSOR_DOWN='\033[1B'
-CLEAR_LINE='\033[2K'
-CARRIAGE_RETURN='\r'
+CLEAR_LINE='\033[2K'    # Clear the entire line
+CARRIAGE_RETURN='\r'    # Move cursor to beginning of line
 
 # --- Helper Functions ---
 
-# Get terminal dimensions
-get_terminal_size() {
-    if command -v tput >/dev/null 2>&1; then
-        TERM_ROWS=$(tput lines)
-        TERM_COLS=$(tput cols)
-    else
-        # Default values if tput is not available
-        TERM_ROWS=24
-        TERM_COLS=80
-    fi
-}
-
-# Draw progress bar
+# Draw the progress bar
+# Simply updates the current line with the progress bar, no fragments
 draw_progress_bar() {
     local percent=$1
     local label=$2
+    
+    # Calculate bar components
     local bar_size=50
     local filled=$(( percent * bar_size / 100 ))
     local empty=$(( bar_size - filled ))
     
-    # Draw the progress bar
-    printf "${CYAN}%s: [" "$label"
-    printf "%${filled}s" | tr ' ' '#'
-    printf "%${empty}s" | tr ' ' ' '
-    printf "] %3d%%${NC}" $percent
+    # Build the bar string first (more efficient than multiple echo calls)
+    local bar_filled=""
+    local bar_empty=""
     
-    # Clear the rest of the line
-    printf "${CLEAR_LINE}\n"
+    for ((i=0; i<filled; i++)); do
+        bar_filled="${bar_filled}#"
+    done
+    
+    for ((i=0; i<empty; i++)); do
+        bar_empty="${bar_empty} "
+    done
+    
+    # Use printf instead of echo for more consistent behavior across shells
+    # \r moves cursor to beginning of line, \033[K clears the line
+    printf "\r\033[K${CYAN}%s: [%s%s] %d%%${NC}" "$label" "$bar_filled" "$bar_empty" "$percent"
 }
 
-# Draw both progress bars (file and overall)
-draw_progress_bars() {
-    local file_percent=$1
-    local overall_percent=$2
-    local file_info=$3
-    
-    # Save cursor position and move to bottom of terminal
-    get_terminal_size
-    tput sc
-    
-    # Draw file info line
-    tput cup $(( TERM_ROWS - 4 )) 0
-    printf "${CLEAR_LINE}${BLUE}[*]${NC} Current file: %s" "${file_info:0:$(( TERM_COLS - 15 ))}"
-    
-    # Draw file progress bar
-    tput cup $(( TERM_ROWS - 3 )) 0
-    draw_progress_bar "$file_percent" "File progress"
-    
-    # Draw overall progress bar
-    tput cup $(( TERM_ROWS - 2 )) 0
-    draw_progress_bar "$overall_percent" "Overall progress"
-    
-    # Restore cursor position
-    tput rc
-}
-
-# Update progress and file info based on rsync output
+# Update progress based on rsync output
+# Processes each line of rsync output to update the progress indicator
 update_progress() {
     local line="$1"
-    local file_percent=0
-    local file_info=""
-    local bytes_transferred=0
     
-    # Extract progress percentage from rsync output
-    if [[ "$line" =~ ([0-9]+)% ]]; then
-        file_percent="${BASH_REMATCH[1]}"
-        
-        # Extract bytes transferred if available
-        if [[ "$line" =~ ([0-9,]+)/([0-9,]+) ]]; then
-            local current_bytes=$(echo "${BASH_REMATCH[1]}" | tr -d ',')
-            local total_bytes=$(echo "${BASH_REMATCH[2]}" | tr -d ',')
-            
-            # Update transferred bytes for overall progress calculation
-            bytes_transferred=$current_bytes
-            
-            # Update total bytes if this is a new file
-            if [[ "$CURRENT_FILE" != "$line" ]]; then
-                CURRENT_FILE="$line"
-                CURRENT_FILE_TOTAL_BYTES=$total_bytes
-            fi
-        fi
-        
-        # Update overall progress
-        TOTAL_BYTES_TRANSFERRED=$(( TOTAL_BYTES_TRANSFERRED + bytes_transferred - LAST_BYTES_TRANSFERRED ))
-        LAST_BYTES_TRANSFERRED=$bytes_transferred
-        
-        # Calculate overall percentage
-        local overall_percent=0
-        if [[ $TOTAL_BYTES_TO_TRANSFER -gt 0 ]]; then
-            overall_percent=$(( TOTAL_BYTES_TRANSFERRED * 100 / TOTAL_BYTES_TO_TRANSFER ))
-        fi
-        
-        # Ensure overall percentage doesn't exceed 100%
-        if [[ $overall_percent -gt 100 ]]; then
-            overall_percent=100
-        fi
-        
-        # Update both progress bars
-        draw_progress_bars "$file_percent" "$overall_percent" "$file_info"
+    # Track if any progress was actually detected
+    local progress_detected=false
+    
+    # Debug output if verbose is enabled
+    if [ "$VERBOSE" = true ]; then
+        # Print debug info on new lines
+        echo
+        echo "$line"
     fi
     
-    # Extract file information
-    if [[ "$line" =~ to\ send$ ]]; then
-        # This is the initial calculation line, don't display
-        return
-    elif [[ "$line" =~ ^sending\ incremental ]]; then
-        # This is the initial transfer line, don't display
-        return
-    elif [[ "$line" =~ ^sent\ [0-9]+ ]]; then
-        # This is the summary line, don't display
-        return
-    elif [[ "$line" =~ ^total\ size ]]; then
-        # This is the summary line, don't display
-        return
-    elif [[ "$line" =~ ^$|^\ *$ ]]; then
-        # Empty line, don't display
-        return
-    else
-        # This is likely a file being transferred
-        file_info="$line"
+    # For rsync stats output, extract bytes transferred and total bytes
+    if [[ "$line" =~ ([0-9,]+)/([0-9,]+) ]]; then
+        local current=$(echo "${BASH_REMATCH[1]}" | tr -d ',')
+        local total=$(echo "${BASH_REMATCH[2]}" | tr -d ',')
         
-        # Update file info in progress bars
-        local overall_percent=0
-        if [[ $TOTAL_BYTES_TO_TRANSFER -gt 0 ]]; then
-            overall_percent=$(( TOTAL_BYTES_TRANSFERRED * 100 / TOTAL_BYTES_TO_TRANSFER ))
+        if [[ "$current" =~ ^[0-9]+$ ]] && [[ "$total" =~ ^[0-9]+$ ]] && [ "$total" -gt 0 ]; then
+            local percent=$(( current * 100 / total ))
+            progress_detected=true
+            
+            # Save for final display and future reference
+            FINAL_PROGRESS_PERCENTAGE=$percent
+            CURRENT_PROGRESS_BAR="Overall Progress: [$percent%]"
+            
+            # Update the progress display (single line only)
+            draw_progress_bar $percent "Overall Progress"
         fi
-        
-        # Ensure overall percentage doesn't exceed 100%
-        if [[ $overall_percent -gt 100 ]]; then
-            overall_percent=100
+    # For simple percentage format like " 45%" or "45%"
+    elif [[ "$line" =~ \ *([0-9]+)% ]]; then
+        local percent="${BASH_REMATCH[1]}"
+        if [[ "$percent" =~ ^[0-9]+$ ]]; then
+            progress_detected=true
+            
+            # Save for final display
+            FINAL_PROGRESS_PERCENTAGE=$percent
+            
+            # Update the progress display (single line only)
+            draw_progress_bar $percent "Overall Progress"
         fi
-        
-        # Extract file progress if available
-        if [[ "$line" =~ ([0-9]+)% ]]; then
-            file_percent="${BASH_REMATCH[1]}"
-        else
-            file_percent=0
+    # For completed files (containing xfr# pattern)
+    elif [[ "$line" =~ xfr#([0-9]+) ]]; then
+        # Save overall progress - we've completed a file
+        TRANSFERRED_FILES=$(( TRANSFERRED_FILES + 1 ))
+        if [ "$TOTAL_FILES" -gt 0 ]; then
+            local percent=$(( TRANSFERRED_FILES * 100 / TOTAL_FILES ))
+            progress_detected=true
+            
+            # Save for final display
+            FINAL_PROGRESS_PERCENTAGE=$percent
+            
+            # Update the progress display (single line only)
+            draw_progress_bar $percent "Overall Progress"
         fi
+    # If we're getting bytes information but couldn't calculate a percentage,
+    # show an indeterminate progress
+    elif ! $progress_detected && [[ "$line" =~ ([0-9,]+)\ +bytes ]]; then
+        # Show pulsing progress bar
+        PULSE_STATE=$(( (PULSE_STATE + 1) % 4 ))
+        case $PULSE_STATE in
+            0) PULSE_CHAR="|" ;;
+            1) PULSE_CHAR="/" ;;
+            2) PULSE_CHAR="-" ;;
+            3) PULSE_CHAR="\\" ;;
+        esac
         
-        draw_progress_bars "$file_percent" "$overall_percent" "$file_info"
+        # Show the pulsing indicator (single line only)
+        printf "\r\033[KTransferring... %s " "$PULSE_CHAR"
     fi
 }
 
-# Clear progress bars and file info
-clear_progress_bars() {
-    get_terminal_size
-    tput sc
-    # Clear file info line
-    tput cup $(( TERM_ROWS - 4 )) 0
-    printf "${CLEAR_LINE}\n"
-    # Clear file progress bar line
-    tput cup $(( TERM_ROWS - 3 )) 0
-    printf "${CLEAR_LINE}\n"
-    # Clear overall progress bar line
-    tput cup $(( TERM_ROWS - 2 )) 0
-    printf "${CLEAR_LINE}\n"
-    tput rc
+# Show final progress bar that persists
+# This creates a static progress bar that remains visible after program exit
+show_final_progress_bar() {
+    local percent=$1
+    
+    # If percent is not provided, default to 100%
+    if [ -z "$percent" ]; then
+        percent=100
+    fi
+    
+    # Print an empty line before the final progress bar
+    echo
+    
+    # Calculate bar components
+    local bar_size=50
+    local filled=$(( percent * bar_size / 100 ))
+    local empty=$(( bar_size - filled ))
+    
+    # Build the bar string first
+    local bar_filled=""
+    local bar_empty=""
+    
+    for ((i=0; i<filled; i++)); do
+        bar_filled="${bar_filled}#"
+    done
+    
+    for ((i=0; i<empty; i++)); do
+        bar_empty="${bar_empty} "
+    done
+    
+    # Print the entire progress bar on a single line
+    echo -e "${CYAN}Final Overall Progress: [${bar_filled}${bar_empty}] ${percent}%${NC}"
+    
+    # Print an empty line after the final progress bar
+    echo
 }
 
 # Calculate total size of all files to be transferred
@@ -240,10 +218,15 @@ calculate_total_size() {
         
         # Extract total bytes to be transferred
         local bytes=$(echo "$size_output" | grep "Total transferred file size:" | grep -o '[0-9,]*' | tr -d ',')
-        if [[ -n "$bytes" ]]; then
+        if [[ "$bytes" =~ ^[0-9]+$ ]]; then
             total_bytes=$(( total_bytes + bytes ))
         fi
     done
+    
+    # Make sure we return a number, even if it's 0
+    if [[ ! "$total_bytes" =~ ^[0-9]+$ ]]; then
+        total_bytes=1  # Default to 1 to avoid division by zero
+    fi
     
     echo "$total_bytes"
 }
@@ -294,7 +277,14 @@ check_command() {
 # Check if yq is installed
 check_yq() {
     if ! check_command yq; then
-        print_error "yq is not installed. Please install it with 'sudo apt-get install -y yq' and try again."
+        print_error "yq is not installed. Please install it."
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            print_error "Please install it with 'sudo apt-get install -y yq' and try again."
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+            print_error "Please install it with 'brew install yq' and try again."
+        else
+            print_error "Please install it and try again."
+        fi
         exit 1
     fi
 }
@@ -339,7 +329,7 @@ process_config() {
     # Read configuration values
     local name=$(read_yaml "$config_file" ".name" "Backup")
     local description=$(read_yaml "$config_file" ".description" "")
-    local destination=$(read_yaml "$config_file" ".destination" "")
+    destination=$(read_yaml "$config_file" ".destination" "")
     local verbose=$(read_yaml "$config_file" ".verbose" "false")
     
     # Print configuration header
@@ -372,17 +362,24 @@ process_config() {
         exit 1
     fi
     
+    # Initialize global variables for progress tracking
+    FINAL_PROGRESS_PERCENTAGE=0
+    TOTAL_FILES=0
+    TRANSFERRED_FILES=0
+    CURRENT_PROGRESS_BAR=""
+    
     # Calculate total size of all files to be transferred
     TOTAL_BYTES_TO_TRANSFER=$(calculate_total_size "$config_file")
-    TOTAL_BYTES_TRANSFERRED=0
-    LAST_BYTES_TRANSFERRED=0
-    CURRENT_FILE=""
-    CURRENT_FILE_TOTAL_BYTES=0
     
-    print_status "Total size to transfer: $(numfmt --to=iec-i --suffix=B $TOTAL_BYTES_TO_TRANSFER)"
+    if [[ "$TOTAL_BYTES_TO_TRANSFER" =~ ^[0-9]+$ ]]; then
+        print_status "Total size to transfer: $(numfmt --to=iec-i --suffix=B $TOTAL_BYTES_TO_TRANSFER)"
+    else
+        print_status "Total size to transfer: calculating..."
+        TOTAL_BYTES_TO_TRANSFER=1  # Default to 1 to avoid division by zero
+    fi
     
-    # Build rsync options
-    RSYNC_OPTIONS="-a --progress"
+    # Build rsync options with enhanced progress display
+    RSYNC_OPTIONS="-a --progress --info=progress2,stats"
     
     # Add options from configuration
     local preserve_deleted=$(read_yaml "$config_file" ".options.preserve_deleted" "true")
@@ -444,34 +441,49 @@ process_config() {
         # Execute the backup for this source directory
         local backup_cmd="rsync $RSYNC_OPTIONS $filter_options \"$source_dir_with_slash\" \"$dest_dir\""
         
-        # Create space for the file info line and progress bars
-        echo
-        echo
-        echo
-        echo
+        # Initialize progress display variables
+        PULSE_STATE=0
         
-        # Initialize progress bars and file info line
-        get_terminal_size
-        tput sc
-        tput cup $(( TERM_ROWS - 4 )) 0
-        printf "${BLUE}[*]${NC} Current file: Preparing..."
-        tput rc
-        draw_progress_bars 0 0 "Preparing..."
+        # Create a temporary file for rsync output
+        local rsync_output=$(mktemp /tmp/rsync_output.XXXXXX)
         
-        # Execute rsync with the constructed options and capture output for progress bar
-        eval "$backup_cmd 2>&1" | while IFS= read -r line; do
-            # Update progress bar and file info
-            update_progress "$line"
+        # Run rsync in the background, capturing its output to the temp file
+        eval "$backup_cmd > \"$rsync_output\" 2>&1" &
+        local rsync_pid=$!
+        
+        # Monitor the output file and update the progress bar
+        while kill -0 $rsync_pid 2>/dev/null; do
+            if [[ -s "$rsync_output" ]]; then
+                # Get the latest line and process it
+                local latest_line=$(tail -n 1 "$rsync_output")
+                update_progress "$latest_line"
+            fi
+            # Sleep briefly to avoid hammering the CPU
+            sleep 0.1
         done
         
-        # Clear progress bars and file info, then show completion
-        clear_progress_bars
+        # Wait for rsync to finish and get its exit status
+        wait $rsync_pid
+        local rsync_status=$?
+        
+        # Process the output one more time to get the final status
+        if [[ -s "$rsync_output" ]]; then
+            local final_line=$(tail -n 1 "$rsync_output")
+            update_progress "$final_line"
+        fi
+        
+        # Clean up the temporary file
+        rm -f "$rsync_output"
+        
+        # Display final progress bar after backup completes
+        echo
+        show_final_progress_bar $FINAL_PROGRESS_PERCENTAGE
         
         # Check if the backup was successful
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        if [ $rsync_status -eq 0 ]; then
             echo "✓ Backup of $source_name completed successfully"
         else
-            echo "✗ Backup of $source_name failed with error code ${PIPESTATUS[0]}"
+            echo "✗ Backup of $source_name failed with error code $rsync_status"
         fi
         echo
     done
@@ -481,6 +493,9 @@ process_config() {
     echo "  Finished at: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "=========================================================="
     
+    # Display final progress bar at 100% to indicate completion
+    show_final_progress_bar 100
+    
     exit 0
 }
 
@@ -489,6 +504,12 @@ perform_backup() {
     local source_dir="$1"
     local dest_dir="$2"
     local rsync_options="$3"
+    
+    # Initialize global variables for progress tracking
+    FINAL_PROGRESS_PERCENTAGE=0
+    TOTAL_FILES=0
+    TRANSFERRED_FILES=0
+    CURRENT_PROGRESS_BAR=""
     
     # Create destination directory if it doesn't exist
     if [ ! -d "$dest_dir" ]; then
@@ -504,8 +525,8 @@ perform_backup() {
         rsync_options="$rsync_options --dry-run"
     fi
     
-    # Always add info flag for progress updates, but don't print each file on a new line
-    rsync_options="$rsync_options --info=progress2"
+    # Always add info flag for enhanced progress updates
+    rsync_options="$rsync_options --info=progress2,stats"
     
     # If verbose is true, we'll still capture all output but display it differently
     if [ "$VERBOSE" = true ]; then
@@ -517,42 +538,72 @@ perform_backup() {
         rsync_options="$rsync_options --progress"
     fi
     
-    # Create space for the file info line and progress bars
-    echo
-    echo
-    echo
-    echo
+    # Initialize progress display variables
+    PULSE_STATE=0
     
-    # Initialize progress bars and file info line
-    get_terminal_size
-    tput sc
-    tput cup $(( TERM_ROWS - 4 )) 0
-    printf "${BLUE}[*]${NC} Current file: Preparing..."
-    tput rc
-    draw_progress_bars 0 0 "Preparing..."
+    # Create a temporary file for rsync output
+    local rsync_output=$(mktemp /tmp/rsync_output.XXXXXX)
     
-    # Execute rsync with the constructed options and capture output for progress bar
-    eval "rsync $rsync_options \"$source_dir\" \"$dest_dir\" 2>&1" | while IFS= read -r line; do
-        # Update progress bar and file info
-        update_progress "$line"
+    # Run rsync in the background, capturing its output to the temp file
+    eval "rsync $rsync_options \"$source_dir\" \"$dest_dir\" > \"$rsync_output\" 2>&1" &
+    local rsync_pid=$!
+    
+    # Monitor the output file and update the progress bar
+    while kill -0 $rsync_pid 2>/dev/null; do
+        if [[ -s "$rsync_output" ]]; then
+            # Get the latest line and process it
+            local latest_line=$(tail -n 1 "$rsync_output")
+            update_progress "$latest_line"
+        fi
+        # Sleep briefly to avoid hammering the CPU
+        sleep 0.1
     done
     
-    # Clear progress bars and file info, then show completion
-    clear_progress_bars
-    print_success "Backup completed successfully!"
+    # Wait for rsync to finish and get its exit status
+    wait $rsync_pid
+    local rsync_status=$?
+    
+    # Process the output one more time to get the final status
+    if [[ -s "$rsync_output" ]]; then
+        local final_line=$(tail -n 1 "$rsync_output")
+        update_progress "$final_line"
+    fi
+    
+    # Clean up the temporary file
+    rm -f "$rsync_output"
+    
+    # Display final progress bar after backup completes
+    echo
+    show_final_progress_bar $FINAL_PROGRESS_PERCENTAGE
+    
+    if [ $rsync_status -eq 0 ]; then
+        print_success "Backup completed successfully!"
+    else
+        print_error "Backup failed with error code $rsync_status"
+    fi
+    
+    # Return the rsync status
+    return $rsync_status
 }
 
 # --- Main Script Logic ---
 
-# Check if terminal supports cursor movement
-if ! check_command tput >/dev/null 2>&1; then
-    print_warning "tput command not found. Progress bar may not display correctly."
+# Check if terminal has required capabilities for progress display
+if ! check_command stty >/dev/null 2>&1; then
+    print_warning "stty command not found. Progress bar may not display correctly."
+    exit 1
 fi
 
 # Check if rsync is installed
 if ! check_command rsync; then
     print_error "rsync is not installed. Please install it and try again."
     exit 1
+fi
+
+# Check if stdbuf is installed (needed for progress bar handling)
+if ! check_command stdbuf; then
+    print_warning "stdbuf command not found. Progress bar may not display correctly."
+    print_warning "Install coreutils package to get stdbuf: 'sudo apt install coreutils' on Debian/Ubuntu"
 fi
 
 # Default values
@@ -654,5 +705,8 @@ perform_backup "$SOURCE_DIR" "$DEST_DIR" "$RSYNC_OPTIONS"
 # Print completion message with timestamp
 COMPLETION_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 print_success "Backup completed at: $COMPLETION_TIME"
+
+# Display final progress bar at 100% to indicate completion
+show_final_progress_bar 100
 
 exit 0
