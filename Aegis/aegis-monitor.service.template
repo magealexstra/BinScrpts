@@ -1,0 +1,13 @@
+[Unit]
+Description=Aegis Protocol: Battery & State Monitor Daemon
+After=nut-server.service nut-client.service
+Requires=nut-server.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-monitor.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+# Aegis Protocol: NUT Timer Logic
+# Location: /etc/nut/upssched.conf
+
+CMDSCRIPT /usr/local/bin/upssched-cmd
+
+# Timer: Wait 10 minutes (600s) before entering Siege Mode
+AT ONBATT * START-TIMER enter-siege 600
+AT ONLINE * CANCEL-TIMER enter-siege
+AT ONLINE * EXECUTE resume-siege
+
+# Critical: Immediate shutdown if battery is LOW
+AT LOWBATT * EXECUTE shutdown-now

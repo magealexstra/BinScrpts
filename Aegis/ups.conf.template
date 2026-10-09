@@ -1,0 +1,14 @@
+# Aegis Protocol: NUT Driver Configuration
+# Location: /etc/nut/ups.conf
+
+[cyberpower]
+    driver = usbhid-ups
+    port = auto
+    vendorid = 0764
+    productid = 0601
+    desc = "CyberPower CP1500AVRLCD3"
+    
+    # Stability Tweaks for CyberPower
+    pollinterval = 15
+    pollfreq = 30
+    # lowbatt = 15

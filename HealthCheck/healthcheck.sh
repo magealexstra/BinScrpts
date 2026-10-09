@@ -439,6 +439,69 @@ elif [ "$MODE" = "full" ]; then
     print_ok "Systemd Services: All background units nominal (0 failed)"
 fi
 
+# --- 7b. UPS & Power (NUT / Aegis) -- only on hosts running NUT ---
+if command -v upsc >/dev/null 2>&1; then
+    if [ "$MODE" = "full" ]; then
+        print_header "UPS & POWER (AEGIS)"
+    fi
+    UPS_NAME=$(upsc -l 2>/dev/null | head -n 1)
+    if [ -n "$UPS_NAME" ]; then
+        UPS_STATUS=$(upsc "$UPS_NAME" ups.status 2>/dev/null || echo "UNKNOWN")
+        UPS_CHARGE=$(upsc "$UPS_NAME" battery.charge 2>/dev/null || echo "0")
+        UPS_RUNTIME=$(upsc "$UPS_NAME" battery.runtime 2>/dev/null || echo "0")
+        UPS_LOAD=$(upsc "$UPS_NAME" ups.load 2>/dev/null || echo "0")
+        UPS_REALPWR=$(upsc "$UPS_NAME" ups.realpower 2>/dev/null || echo "0")
+        UPS_MODEL=$(upsc "$UPS_NAME" device.model 2>/dev/null || echo "UPS")
+
+        RUNTIME_MIN=$(( UPS_RUNTIME / 60 ))
+
+        if [ "$UPS_STATUS" = "OL" ]; then
+            if [ "$MODE" = "full" ]; then
+                print_ok "Power State: Online (Grid Nominal) | Model: $UPS_MODEL"
+            fi
+        elif [ "$UPS_STATUS" = "OB" ]; then
+            print_crit "Power State: ON BATTERY (Grid Offline) | Model: $UPS_MODEL"
+        else
+            print_warn "Power State: $UPS_STATUS | Model: $UPS_MODEL"
+        fi
+
+        if [ "$UPS_CHARGE" -lt 30 ]; then
+            print_crit "UPS Battery Critical: ${UPS_CHARGE}% (Runtime: ~${RUNTIME_MIN}m) | Load: ${UPS_LOAD}% (~${UPS_REALPWR}W)"
+        elif [ "$UPS_CHARGE" -lt 60 ]; then
+            print_warn "UPS Battery Low: ${UPS_CHARGE}% (Runtime: ~${RUNTIME_MIN}m) | Load: ${UPS_LOAD}% (~${UPS_REALPWR}W)"
+        elif [ "$MODE" = "full" ]; then
+            print_ok "Battery Charge: ${UPS_CHARGE}% (Runtime: ~${RUNTIME_MIN}m) | Load: ${UPS_LOAD}% (~${UPS_REALPWR}W)"
+        fi
+    else
+        print_warn "No UPS discovered via NUT"
+    fi
+fi
+
+# --- 7c. VPN Tunnel (Gluetun) -- only on hosts that have a gluetun container ---
+if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^gluetun$"; then
+    if [ "$MODE" = "full" ]; then
+        print_header "VPN CLOAK & ROUTING"
+    fi
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^gluetun$"; then
+        VPN_JSON=$(docker exec gluetun wget -qO- --timeout=5 https://am.i.mullvad.net/json 2>/dev/null || true)
+        if [ -n "$VPN_JSON" ]; then
+            VPN_IP=$(echo "$VPN_JSON" | grep -o '"ip":"[^"]*' | cut -d'"' -f4)
+            VPN_CITY=$(echo "$VPN_JSON" | grep -o '"city":"[^"]*' | cut -d'"' -f4)
+            VPN_COUNTRY=$(echo "$VPN_JSON" | grep -o '"country":"[^"]*' | cut -d'"' -f4)
+            VPN_ORG=$(echo "$VPN_JSON" | grep -o '"organization":"[^"]*' | cut -d'"' -f4)
+
+            if [ "$MODE" = "full" ]; then
+                print_ok "Gluetun VPN Tunnel: Active"
+                print_info "Exit IP: $VPN_IP ($VPN_CITY, $VPN_COUNTRY) via $VPN_ORG"
+            fi
+        else
+            print_warn "Gluetun container running, but external verification probe timed out"
+        fi
+    else
+        print_warn "Gluetun container is not running"
+    fi
+fi
+
 # --- 8. Overall Status Summary ---
 if [ "$MODE" = "full" ]; then
     print_header "SYSTEM STATUS SUMMARY"
