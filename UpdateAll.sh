@@ -3,7 +3,7 @@
 # System Update Automation Script
 # Description: Performs system updates across multiple package managers
 # Created: 06-28-22
-# Last Modified: 2025-04-02 # Updated modification date
+# Last Modified: 2026-09-18
 
 # Error handling
 set -eo pipefail # Exit on error, treat pipeline errors as command errors
@@ -12,7 +12,8 @@ trap 'print_error "Error occurred on line $LINENO. Exiting..."; exit 1' ERR
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-RED='\033[0;31m'  # Added Red color
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # --- Helper Functions ---
@@ -24,8 +25,11 @@ print_success() {
     echo -e "${GREEN}[✓]${NC} $1"
 }
 
+print_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
 print_error() {
-    # Print to stderr
     echo -e "${RED}[✗]${NC} $1" >&2
 }
 
@@ -36,28 +40,27 @@ check_command() {
 # --- Update Functions ---
 update_apt() {
     print_status "Updating APT package lists..."
-    sudo apt update
+    sudo apt-get -o DPkg::Lock::Timeout=60 update
     print_success "APT package lists updated"
 
     print_status "Performing full APT system upgrade..."
-    sudo apt full-upgrade -y
+    # Using DEBIAN_FRONTEND=noninteractive prevents interactive prompts during upgrades
+    sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 dist-upgrade -y
     print_success "APT system upgrade completed"
 
-    # Check if there are any packages that can be removed
-    if sudo apt list --auto-removable 2>/dev/null | grep -q "."; then
-        print_status "Removing unnecessary APT packages..."
-        sudo apt autoremove -y
-        print_success "Unnecessary APT packages removed"
-    else
-        print_status "No unnecessary APT packages to remove."
-    fi
+    print_status "Removing unnecessary APT packages..."
+    sudo apt-get -o DPkg::Lock::Timeout=60 autoremove -y
+    print_success "Unnecessary APT packages removed"
 }
 
 update_flatpak() {
     if check_command flatpak; then
         print_status "Updating Flatpak applications..."
-        flatpak update -y
-        print_success "Flatpak applications updated"
+        if flatpak update -y; then
+            print_success "Flatpak applications updated"
+        else
+            print_warning "Flatpak update encountered issues."
+        fi
     else
         print_status "Flatpak not found, skipping."
     fi
@@ -66,37 +69,34 @@ update_flatpak() {
 update_snap() {
     if check_command snap; then
         print_status "Updating Snap packages..."
-        sudo snap refresh
-        print_success "Snap packages updated"
+        if sudo snap refresh; then
+            print_success "Snap packages updated"
+        else
+            print_warning "Snap refresh encountered issues."
+        fi
     else
         print_status "Snap not found, skipping."
     fi
 }
 
-update_pip() {
-    if check_command pip3; then
-        print_status "Updating global Python packages (pip3)..."
-        # Get list of outdated packages
-        outdated_packages=$(sudo pip3 list --outdated --format=freeze | cut -d'=' -f1)
-        if [ -n "$outdated_packages" ]; then
-            echo "Outdated pip packages found: $outdated_packages"
-            # Update using xargs, handle potential errors per package
-            echo "$outdated_packages" | xargs -n1 sudo pip3 install -U || print_status "Some pip packages might have failed to update."
-            print_success "Global Python packages update attempt finished."
+update_npm() {
+    if check_command npm; then
+        print_status "Updating global npm packages..."
+        # Update all global packages (avoids EBADENGINE from forcing unsupported npm major versions)
+        if sudo npm update -g; then
+            print_success "Global npm packages updated"
         else
-            print_success "All global Python packages are up-to-date."
+            print_warning "npm update encountered warnings or non-fatal issues."
         fi
     else
-        print_status "pip3 not found, skipping Python package update."
+        print_status "npm not found, skipping."
     fi
 }
-
 
 # --- Cleanup Functions ---
 cleanup_apt() {
     print_status "Cleaning APT package cache..."
-    sudo apt clean
-    sudo apt autoclean
+    sudo apt-get clean
     print_success "APT package cache cleaned"
 }
 
@@ -109,7 +109,6 @@ cleanup_logs() {
         print_status "journalctl not found, skipping log cleanup."
     fi
 }
-
 
 # --- Main Script Logic ---
 
@@ -124,10 +123,10 @@ fi
 print_status "Starting system update process..."
 
 update_apt
-cleanup_apt # Clean cache after updates/removals
+cleanup_apt
 update_flatpak
 update_snap
-update_pip
+update_npm
 cleanup_logs
 
 print_success "All updates and cleanup completed successfully!"
