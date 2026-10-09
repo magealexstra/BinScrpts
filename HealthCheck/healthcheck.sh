@@ -369,13 +369,13 @@ if command -v tailscale >/dev/null 2>&1; then
     fi
 fi
 
-# WAN Connectivity Probe
-if ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+# WAN Connectivity Probe (HTTPS via curl: works where ICMP or the ping binary is unavailable)
+if curl -s -o /dev/null --connect-timeout 3 --max-time 5 https://1.1.1.1 2>/dev/null; then
     if [ "$MODE" = "full" ]; then
         print_ok "WAN Internet Connectivity: Reachable (1.1.1.1)"
     fi
 else
-    print_warn "WAN Internet Connectivity: Ping probe failed"
+    print_warn "WAN Internet Connectivity: HTTPS probe to 1.1.1.1 failed"
 fi
 
 # --- 7. Local Services & Container Fleet ---
