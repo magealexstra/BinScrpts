@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# =============================================================================
+# headset-restart — escalating audio reset for the Turtle Beach Stealth 700X
+# =============================================================================
+# HISTORY / WHY THIS EXISTS
+#   Original version (backup: Backups/headset-restart.2026-09-23.bak) just ran
+#   `systemctl --user restart pipewire wireplumber`. That fixed the headset but
+#   killed every app's audio connection. Chrome recovers on its own; these do not:
+#     - Claude Code CLI: loads libpipewire/libasound in-process at startup and
+#       keeps a dead connection (voice mode mic + audio output refuse to work).
+#       Only fix is restarting it (`claude --continue` resumes the session).
+#     - Antigravity (Electron): its Chromium AudioService child process holds a
+#       dead connection; mic icon vanishes. Killing that child makes Chromium
+#       respawn it (no need to close the app).
+#   So the script now tries the GENTLEST reset first and only escalates if the
+#   headset still fails a health check.
+#
+# STAGES (escalating)
+#   1 soft : cycle the headset card profile off/on + suspend/resume sink & source.
+#            Sockets untouched -> apps keep their connections. (Tested OK with
+#            Antigravity mic on 2026-09-23.)
+#   2 wp   : restart WirePlumber only. PipeWire sockets stay up.
+#   3 full : restart pipewire + pipewire-pulse + wireplumber, then bounce every
+#            Chromium/Electron AudioService so those apps reconnect. Native-audio
+#            apps (Claude Code voice) still need a manual restart after this.
+#
+# USAGE
+#   headset-restart           soft; escalate to wp, then full, only while the
+#                             health check keeps failing (DEFAULT)
+#   headset-restart --all     force all three stages in succession, no early stop
+#   headset-restart --soft | --wp | --full     run just that one stage
+#
+# HEALTH CHECK (after each stage)
+#   headset sink+source exist, card profile not "off", a 1s capture from the
+#   headset mic returns data, and a 0.5s silent playback to the sink succeeds.
+#   It cannot detect "connected but inaudible" — if a stage passes but you still
+#   hear nothing, use --all or a specific stage.
+#
+# LOGGING
+#   Every run appends a pre-reset snapshot (sinks, sources, card profile, USB,
+#   recent WirePlumber + kernel USB log lines) to Logs/headset-restart.log so we
+#   can see WHY it failed. Revisit that log if the script doesn't fix the headset.
+#
+# STATUS: soft stage verified healthy-state only; not yet proven against a real
+#   failure. If it doesn't fix a real failure, read the log and revisit.
+# =============================================================================
+set -u
+
+CARD_MATCH="Turtle_Beach"
+LOG="/home/magealexstra/TheWorkshop/Logs/headset-restart.log"
+mkdir -p "$(dirname "$LOG")"
+
+say()    { echo "$*" | tee -a "$LOG"; }
+notify() { command -v notify-send >/dev/null 2>&1 && notify-send "Headset Audio Reset" "$1" -i audio-headset; }
+
+# --- remember state we must restore (defaults get lost when nodes are recreated)
+card=$(pactl list short cards | awk -v m="$CARD_MATCH" '$2 ~ m {print $2; exit}')
+profile=$(pactl list cards | awk -v c="$card" '$0 ~ "Name: "c {f=1} f && /Active Profile:/ {print $3; exit}')
+[ -z "$profile" ] || [ "$profile" = "off" ] && profile="output:analog-stereo+input:mono-fallback"
+def_sink=$(pactl get-default-sink 2>/dev/null)
+def_source=$(pactl get-default-source 2>/dev/null)
+
+restore_defaults() {
+    [ -n "$def_sink" ]   && pactl set-default-sink "$def_sink" 2>/dev/null
+    [ -n "$def_source" ] && pactl set-default-source "$def_source" 2>/dev/null
+}
+
+wait_for_pipewire() {
+    for _ in $(seq 1 20); do pactl info >/dev/null 2>&1 && return 0; sleep 0.5; done
+    return 1
+}
+
+# --- snapshot for later diagnosis ------------------------------------------
+snapshot() {
+    {
+        echo "=================== $(date '+%F %T') snapshot (mode: $mode) ==================="
+        echo "--- sinks";   pactl list short sinks 2>&1
+        echo "--- sources"; pactl list short sources 2>&1
+        echo "--- card profile: ${card:-NOT FOUND} -> ${profile}"
+        echo "--- usb";     lsusb 2>&1 | grep -i -E 'turtle|blue'
+        echo "--- wireplumber (last 15)"; journalctl --user -u wireplumber -n 15 --no-pager 2>&1
+        echo "--- kernel usb/audio (last 15)"; journalctl -k -n 200 --no-pager 2>&1 | grep -i -E 'usb|snd' | tail -15
+    } >> "$LOG" 2>&1
+}
+
+# --- health check: returns 0 if headset looks usable -----------------------
+healthy() {
+    local sink source tmp
+    sink=$(pactl list short sinks   | awk -v m="$CARD_MATCH" '$2 ~ m {print $2; exit}')
+    source=$(pactl list short sources | awk -v m="$CARD_MATCH" '$2 ~ m && $2 !~ /monitor/ {print $2; exit}')
+    [ -n "$sink" ] && [ -n "$source" ] || { say "  health: headset sink/source missing"; return 1; }
+    pactl list cards | awk -v c="$card" '$0 ~ "Name: "c {f=1} f && /Active Profile:/ {print $3; exit}' | grep -vq '^off$' \
+        || { say "  health: card profile is off"; return 1; }
+    tmp=$(mktemp)
+    timeout 4 pw-record --target "$source" "$tmp" >/dev/null 2>&1 &
+    local rp=$!; sleep 1.5; kill -INT "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+    local sz; sz=$(stat -c %s "$tmp" 2>/dev/null || echo 0); rm -f "$tmp"
+    [ "$sz" -gt 20000 ] || { say "  health: mic capture returned no data ($sz bytes)"; return 1; }
+    sox -n -r 48000 -c 2 -t wav - trim 0 0.5 2>/dev/null | timeout 5 paplay --device="$sink" 2>/dev/null \
+        || { say "  health: playback to $sink failed"; return 1; }
+    return 0
+}
+
+# --- stages -----------------------------------------------------------------
+stage_soft() {
+    say ">> Stage 1 (soft): cycling profile on ${card:-?}"
+    [ -z "$card" ] && { say "  headset card not found"; return 1; }
+    pactl set-card-profile "$card" off; sleep 1
+    pactl set-card-profile "$card" "$profile"; sleep 1
+    for s in $(pactl list short sinks   | awk -v m="$CARD_MATCH" '$2 ~ m {print $2}'); do pactl suspend-sink "$s" 1;   pactl suspend-sink "$s" 0;   done
+    for s in $(pactl list short sources | awk -v m="$CARD_MATCH" '$2 ~ m {print $2}'); do pactl suspend-source "$s" 1; pactl suspend-source "$s" 0; done
+    restore_defaults
+}
+
+stage_wp() {
+    say ">> Stage 2 (wp): restarting WirePlumber only"
+    systemctl --user restart wireplumber
+    wait_for_pipewire || { say "  PipeWire not responding"; return 1; }
+    sleep 2; restore_defaults
+}
+
+bounce_audio_services() {
+    # Chromium/Electron respawns AudioService on its own and reconnects to the new server.
+    local p
+    for p in $(pgrep -f -- '--type=utility --utility-sub-type=audio.mojom.AudioService'); do
+        say "  bouncing AudioService pid $p ($(readlink /proc/$p/exe))"
+        kill "$p" 2>/dev/null
+    done
+}
+
+stage_full() {
+    say ">> Stage 3 (full): restarting pipewire, pipewire-pulse, wireplumber"
+    systemctl --user restart pipewire pipewire-pulse wireplumber
+    wait_for_pipewire || { say "  PipeWire not responding"; return 1; }
+    sleep 2; restore_defaults
+    bounce_audio_services
+    say "  NOTE: native-audio apps (Claude Code voice) may need a restart (claude --continue)."
+}
+
+# --- main -------------------------------------------------------------------
+mode="${1:-auto}"
+case "$mode" in
+    auto|--all|--soft|--wp|--full) ;;
+    *) echo "Usage: headset-restart [--all|--soft|--wp|--full]" >&2; exit 2 ;;
+esac
+snapshot
+
+case "$mode" in
+    --soft) stages=(stage_soft) ;;
+    --wp)   stages=(stage_wp) ;;
+    --full) stages=(stage_full) ;;
+    *)      stages=(stage_soft stage_wp stage_full) ;;
+esac
+
+ok=1
+for st in "${stages[@]}"; do
+    "$st"
+    sleep 1
+    if healthy; then
+        say "  health: OK after $st"
+        ok=0
+        [ "$mode" = "--all" ] || break      # auto mode stops at first healthy stage
+    else
+        say "  health: FAILED after $st"
+    fi
+done
+
+# --all counts as success if the final stage left the headset healthy
+if [ "$mode" = "--all" ]; then healthy && ok=0 || ok=1; fi
+
+if [ "$ok" -eq 0 ]; then
+    say "Headset healthy. Log: $LOG"; notify "Reset done — headset healthy."
+    exit 0
+else
+    say "Headset STILL failing after all stages. Check $LOG and revisit."
+    notify "Reset finished but headset still failing. See Logs/headset-restart.log"
+    exit 1
+fi

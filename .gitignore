@@ -13,11 +13,11 @@
 
 # Personal configuration files
 PomBackup.sh
-configs/personal.yaml
+Backup/configs/personal.yaml
 
 # Test files and directories
-test_dest/
-test_src/
+Backup/test_dest/
+Backup/test_src/
 *_test.sh
 test_*.sh
 *tests/
@@ -29,8 +29,8 @@ wrapper_*.sh
 # Debug files
 *_debug.sh
 debug_*.sh
-configs/debug.yaml
-configs/test.yaml
+Backup/configs/debug.yaml
+Backup/configs/test.yaml
 
 # Temporary scripts
 temp_*.sh
@@ -44,3 +44,6 @@ setup_*.sh
 # Empty scripts
 empty_*.sh
 *_empty.sh
+
+# Testing directory
+testing/
