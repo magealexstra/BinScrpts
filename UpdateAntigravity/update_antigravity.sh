@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# Load machine-specific settings from the repo-root .env (resolved through symlinks)
+_ENV_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.env"
+if [ -f "$_ENV_FILE" ]; then set -a; . "$_ENV_FILE"; set +a; fi
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
@@ -17,10 +21,11 @@ print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
 print_error() { echo -e "${RED}[✗]${NC} $1" >&2; }
 
 MANIFEST_URL="https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-x64-linux.yml"
-LOCAL_OPT="/home/magealexstra/.local/opt/antigravity"
+LOCAL_OPT="${ANTIGRAVITY_OPT_DIR:-$HOME/.local/opt/antigravity}"
 TEMP_DIR="/tmp/antigravity-updater-$$"
-TRASH_DIR="/home/magealexstra/TheWorkshop/_Temp_Trash"
-BACKUP_DIR="/home/magealexstra/TheWorkshop/Backups"
+TRASH_DIR="${TRASH_DIR:-$HOME/TheWorkshop/_Temp_Trash}"
+BACKUP_DIR="${BACKUP_DIR:-$HOME/TheWorkshop/Backups}"
+AGY_BIN="${AGY_BIN:-$HOME/.local/bin/agy}"
 
 mkdir -p "$TRASH_DIR" "$BACKUP_DIR"
 
@@ -119,12 +124,12 @@ print_status "Latest CLI Version:    $CLI_LATEST"
 
 if [ -n "$CLI_LATEST" ] && [ "${CLI_INSTALLED:-}" != "$CLI_LATEST" ] || [ "${1:-}" == "--force" ]; then
     print_status "Updating CLI via official bootstrapper..."
-    if [ -f "/home/magealexstra/.local/bin/agy" ]; then
+    if [ -f "$AGY_BIN" ]; then
         TEMP_AGY_BACKUP="$TRASH_DIR/agy_backup_$(date +%s)"
-        mv "/home/magealexstra/.local/bin/agy" "$TEMP_AGY_BACKUP"
+        mv "$AGY_BIN" "$TEMP_AGY_BACKUP"
     fi
     curl -fsSL https://antigravity.google/cli/install.sh | bash
-    CLI_NEW=$(/home/magealexstra/.local/bin/agy --version 2>/dev/null || echo "unknown")
+    CLI_NEW=$("$AGY_BIN" --version 2>/dev/null || echo "unknown")
     print_success "Antigravity CLI updated to $CLI_NEW!"
 else
     print_success "Antigravity CLI is already up to date ($CLI_INSTALLED)."

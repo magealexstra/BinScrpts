@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # PortOfMorrow Desktop System Health Check Utility
-# Master Script: /home/magealexstra/TheWorkshop/Scripts/healthcheck.sh
+# Master Script: Projects/BinScrpts/HealthCheck/healthcheck.sh
 # User Command:  healthcheck (via ~/.local/bin/healthcheck)
 # Role: Real-time desktop telemetry, GPU compute, thermals, NVMe/BTRFS storage integrity,
 #       network mesh & local AI/container service audit.
 # ==============================================================================
 
 set -u
+
+# Load machine-specific settings from the repo-root .env (resolved through symlinks)
+_ENV_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.env"
+if [ -f "$_ENV_FILE" ]; then set -a; . "$_ENV_FILE"; set +a; fi
 
 # --- Color Scheme & Formatting ---
 GREEN='\033[0;32m'
@@ -272,13 +276,7 @@ if [ "$MODE" = "full" ]; then
 fi
 
 # List of desktop drives to monitor
-LOCAL_MOUNTS=(
-    "/"
-    "/run/media/magealexstra/Winchester"
-    "/run/media/magealexstra/Minoko"
-    "/run/media/magealexstra/Canti"
-    "/run/media/magealexstra/Jormungandr"
-)
+read -ra LOCAL_MOUNTS <<< "${HEALTHCHECK_LOCAL_MOUNTS:-/}"
 
 for mnt in "${LOCAL_MOUNTS[@]}"; do
     if mountpoint -q "$mnt" 2>/dev/null; then
@@ -305,7 +303,7 @@ done
 
 # Optional Network Shares (Informational only on desktop)
 if [ "$MODE" = "full" ]; then
-    NETWORK_MOUNTS=("/mnt/Hamingja" "/mnt/Heimr" "/mnt/Vardveizla")
+    read -ra NETWORK_MOUNTS <<< "${HEALTHCHECK_NETWORK_MOUNTS:-}"
     NET_HEADER_PRINTED=false
     for net_mnt in "${NETWORK_MOUNTS[@]}"; do
         if mountpoint -q "$net_mnt" 2>/dev/null; then
@@ -325,7 +323,7 @@ if [ "$MODE" = "full" ]; then
 fi
 
 # BTRFS Device Integrity Verification
-for btrfs_mnt in "/run/media/magealexstra/Minoko"; do
+for btrfs_mnt in ${HEALTHCHECK_BTRFS_MOUNTS:-}; do
     if mountpoint -q "$btrfs_mnt" 2>/dev/null; then
         BTRFS_ERRORS=$(btrfs device stats "$btrfs_mnt" 2>/dev/null | awk '$2 > 0 {print $0}')
         if [ -n "$BTRFS_ERRORS" ]; then
@@ -341,7 +339,7 @@ if [ "$MODE" = "full" ]; then
     print_header "NETWORK & MESH"
 fi
 
-LAN_IP=$(ip -4 addr show eno1 2>/dev/null | awk '/inet / {print $2}' | cut -d'/' -f1)
+LAN_IP=$(ip -4 addr show "${HEALTHCHECK_LAN_IFACE:-eno1}" 2>/dev/null | awk '/inet / {print $2}' | cut -d'/' -f1)
 DEFAULT_GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3}')
 if [ -n "$LAN_IP" ]; then
     if [ "$MODE" = "full" ]; then

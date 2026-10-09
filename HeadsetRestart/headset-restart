@@ -46,8 +46,12 @@
 # =============================================================================
 set -u
 
-CARD_MATCH="Turtle_Beach"
-LOG="/home/magealexstra/TheWorkshop/Logs/headset-restart.log"
+# Load machine-specific settings from the repo-root .env (resolved through symlinks)
+_ENV_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.env"
+if [ -f "$_ENV_FILE" ]; then set -a; . "$_ENV_FILE"; set +a; fi
+
+CARD_MATCH="${HEADSET_CARD_MATCH:-Turtle_Beach}"
+LOG="${HEADSET_LOG:-$HOME/TheWorkshop/Logs/headset-restart.log}"
 mkdir -p "$(dirname "$LOG")"
 
 say()    { echo "$*" | tee -a "$LOG"; }

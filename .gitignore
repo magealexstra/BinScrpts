@@ -47,3 +47,6 @@ empty_*.sh
 
 # Testing directory
 testing/
+
+# Machine-specific settings
+.env
