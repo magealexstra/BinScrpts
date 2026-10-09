@@ -1,0 +1,11 @@
+[Unit]
+Description=Verdant Archive nightly backup to the vault drive
+Wants=docker.service
+After=docker.service local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/Heimr/Verdand/the_scriptorium/BinScrpts/ArchiveBackup/archive_backup.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h

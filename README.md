@@ -41,7 +41,18 @@ UPS power-loss protocol built on NUT. Run `sudo Aegis/install-aegis.sh` to insta
 `vpn_heartbeat.sh` - runs inside the `netshoot` container on the Gluetun network; pings public resolvers and pushes a heartbeat to Uptime Kuma every 2 minutes. Writes the exit-IP info to `$STATE_DIR/logs/vpn_status.json`.
 
 ### ArchiveBackup (server)
-`archive_backup.sh` - nightly two-layer backup to the vault drive: rsync with `--backup-dir` history for AppData, Projects and host configs, then a read-only BTRFS snapshot with 30-day retention.
+`archive_backup.sh` - nightly backup to the BTRFS vault drive, run as root by `archive-backup.timer` (03:00, catches up after downtime). Steps:
+1. `pg_dumpall` of each container in `BACKUP_PG_CONTAINERS`.
+2. Online backup of every SQLite database under AppData.
+3. rsync mirrors of AppData, `HEIMR_DIR`, `/etc`, `/usr/local/bin` and crontabs into `Backups/Latest/`.
+4. A read-only snapshot of `Backups/` (which must be a subvolume) into `.snapshots/`, pruned after `BACKUP_SNAPSHOT_KEEP_DAYS`.
+
+Aborts if the vault or a source is not mounted. Logs PASS or FAIL per step, exits non-zero on any failure, and pushes `BACKUP_KUMA_PUSH_URL` only on a full pass. Install with:
+
+    sudo install -m 644 ArchiveBackup/archive-backup.service ArchiveBackup/archive-backup.timer /etc/systemd/system/
+    sudo systemctl daemon-reload && sudo systemctl enable --now archive-backup.timer
+
+Restore: copy from `Backups/Latest/` (or a dated snapshot) back into place; for databases prefer the files under `Latest/Dumps/`.
 
 ## Configuration
 
